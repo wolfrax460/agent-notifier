@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-notifier-cloud"
+version = "0.1.0"
+description = "Hosted multi-user Agent Notifier: remote MCP server (OAuth + personal tokens), Telegram sign-in, dashboard, admin console, REST API."
+readme = "README.md"
+license = {text = "MIT"}
+keywords = ["mcp", "model-context-protocol", "notifications", "telegram", "claude-code", "codex", "opencode", "ai-agents", "ntfy"]
+requires-python = ">=3.10"
+dependencies = ["mcp>=2.0,<3", "httpx>=0.27", "uvicorn>=0.30"]
+
+[project.scripts]
+agent-notifier-cloud = "agent_notifier_cloud.__main__:main"
+
+[project.urls]
+Homepage = "https://agent-notifiers.vercel.app/"
+Repository = "https://github.com/wolfras/agent-notifier"
+Issues = "https://github.com/wolfras/agent-notifier/issues"
+
+[tool.setuptools]
+packages = ["agent_notifier_cloud"]

@@ -1,0 +1,23 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e local
+        name: install
+      - run: python local/tests/test_local.py && python local/tests/test_run.py
+        name: tests
+  cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e cloud
+        name: install
+      - run: cd cloud && python tests/test_cloud.py && python tests/test_admin.py
+        name: tests

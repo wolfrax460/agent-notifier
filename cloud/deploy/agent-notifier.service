@@ -1,0 +1,33 @@
+[Unit]
+Description=Agent Notifier (hosted MCP notifier)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=notify
+Group=notify
+WorkingDirectory=/opt/agent-notifier
+EnvironmentFile=/etc/agent-notifier.env
+ExecStart=/opt/agent-notifier/venv/bin/python -m agent_notifier_cloud serve
+Restart=always
+RestartSec=3
+
+# database lives here (created automatically, owned by the notify user)
+StateDirectory=agent-notifier
+StateDirectoryMode=0700
+
+# keep it small and boxed in; the VM only has ~1 GB RAM shared with other services
+MemoryMax=300M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agent-notifier
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
