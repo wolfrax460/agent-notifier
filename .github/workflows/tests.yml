@@ -9,7 +9,7 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -e local
         name: install
-      - run: python local/tests/test_local.py && python local/tests/test_run.py
+      - run: PYTHONPATH=local python local/tests/test_local.py && PYTHONPATH=local python local/tests/test_run.py && PYTHONPATH=local python local/tests/test_bridge.py
         name: tests
   cloud:
     runs-on: ubuntu-latest
@@ -19,5 +19,5 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -e cloud
         name: install
-      - run: cd cloud && python tests/test_cloud.py && python tests/test_admin.py
+      - run: cd cloud && PYTHONPATH=. python tests/test_cloud.py && python tests/test_admin.py
         name: tests
