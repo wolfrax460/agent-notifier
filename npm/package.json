@@ -1,0 +1,19 @@
+{
+  "name": "agent-notifiers",
+  "version": "0.2.0",
+  "description": "Node CLI launcher for the Agent Notifiers Python companion",
+  "license": "MIT",
+  "bin": {
+    "agent-notifiers": "bin/agent-notifiers.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --check bin/agent-notifiers.cjs"
+  }
+}
