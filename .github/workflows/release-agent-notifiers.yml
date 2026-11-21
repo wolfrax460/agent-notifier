@@ -1,0 +1,92 @@
+name: Publish Agent Notifiers 0.2.0 GitHub release
+on:
+  push:
+    branches:
+      - release/agent-notifiers-020
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and check public Python distributions
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build local --outdir release-assets
+          python -m twine check release-assets/*
+          python -m venv /tmp/agent-notifiers-smoke
+          /tmp/agent-notifiers-smoke/bin/python -m pip install release-assets/*.whl
+          /tmp/agent-notifiers-smoke/bin/python -m agent_notifier --help
+          /tmp/agent-notifiers-smoke/bin/agent-notifiers companion --help
+      - name: Block accidental package data and credentials
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          wheels=list(Path("release-assets").glob("*.whl"))
+          assert len(wheels)==1,wheels
+          with zipfile.ZipFile(wheels[0]) as z:
+              names=z.namelist()
+              assert "agent_notifier/__init__.py" in names
+              bad=(".env","notify.db","cg-key.pem","id_rsa",".sqlite","/cloud/","/secrets/")
+              assert not [n for n in names if any(x in n.lower() for x in bad)],names
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-notifiers-python
+          path: release-assets/*
+          retention-days: 14
+
+  npm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify safe Node launcher and pack
+        working-directory: npm
+        run: |
+          node --check bin/agent-notifiers.cjs
+          node -e "const p=require('./package.json'); if(p.name!=='agent-notifiers'||p.version!=='0.2.0')process.exit(1)"
+          mkdir -p ../release-assets
+          npm pack --ignore-scripts --pack-destination ../release-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-notifiers-npm
+          path: release-assets/*
+          retention-days: 14
+
+  publish-github:
+    needs: [python, npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agent-notifiers-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish GitHub release only after both packages verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd release-assets
+          sha256sum agent_notifiers-*.whl agent_notifiers-*.tar.gz agent-notifiers-*.tgz > SHA256SUMS
+          cd ..
+          TAG=agent-notifiers-v0.2.0
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to overwrite public assets."
+            exit 0
+          fi
+          gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" \
+            --title "Agent Notifiers 0.2.0 — companion CLI" \
+            --notes "Verified public companion-only artifacts: Python wheel/sdist and npm launcher tarball. The npm launcher requires a separately installed Python companion. No Oracle cloud backend or private files are bundled. PyPI/npmjs and WinGet registries are not yet published."
