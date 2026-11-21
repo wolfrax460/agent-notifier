@@ -6,6 +6,7 @@ import time
 from . import channels as ch
 from . import state
 from .config import Settings
+from . import redact as rd
 
 PRIORITIES = ("low", "normal", "high", "urgent")
 
@@ -45,6 +46,8 @@ def notify(
     """
     settings = settings or Settings()
     priority = norm_priority(priority)
+    message = rd.redact(message, settings)
+    title = rd.redact(title, settings)
     available = ch.build(settings)
     configured = [n for n, c in available.items() if c.configured()]
     result: dict = {"sent": [], "failed": {}, "skipped": []}
