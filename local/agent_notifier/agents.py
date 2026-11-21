@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .windows_process import hidden_kwargs
+from .adapter import capabilities_for
+
 KNOWN = ("claude", "codex", "opencode")
 
 
@@ -25,7 +28,7 @@ def _resolve(name: str) -> str | None:
 
 def _version(exe: str) -> str:
     try:
-        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=8, errors="replace")
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=8, errors="replace", **hidden_kwargs())
         out = (r.stdout or r.stderr or "").strip().splitlines()
         return out[0][:60] if out else ""
     except Exception:
@@ -37,7 +40,7 @@ def _running_processes(name: str) -> int:
     count = 0
     try:
         if os.name == "nt":
-            r = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10)
+            r = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10, **hidden_kwargs())
             needle = name.lower()
             for line in r.stdout.splitlines():
                 # CSV first field is "name"
@@ -46,7 +49,7 @@ def _running_processes(name: str) -> int:
                     if needle in first:
                         count += 1
         else:
-            r = subprocess.run(["ps", "-A", "-o", "comm="], capture_output=True, text=True, timeout=10)
+            r = subprocess.run(["ps", "-A", "-o", "comm="], capture_output=True, text=True, timeout=10, **hidden_kwargs())
             needle = name.lower()
             for line in r.stdout.splitlines():
                 if needle in line.lower():
@@ -87,6 +90,7 @@ def detect(settings) -> list[dict[str, Any]]:
             "others": others,
             "custom": display in custom or name.startswith("custom:"),
             "cmd": custom.get(display, ""),
+            "capabilities": capabilities_for(name if name in KNOWN else "custom"),
         })
     return agents
 

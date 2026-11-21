@@ -14,6 +14,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+from .windows_process import hidden_kwargs
 import tempfile
 import threading
 import time
@@ -174,6 +175,7 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                **hidden_kwargs(),
             )
         else:
             try:
@@ -300,12 +302,14 @@ class CodexAgent:
 class OpenCodeAgent:
     name = "opencode"
 
-    def __init__(self, exe: str):
+    def __init__(self, exe: str, model: str = ""):
         self.exe = exe
-        self._model: str = ""
+        self._model: str = model or ""
 
     def build(self, message: str, session_id: str | None, permissions: str) -> list[str]:
         cmd = [self.exe, "run", message, "--format", "json"]
+        if self._model:
+            cmd += ["-m", self._model]
         if session_id:
             cmd += ["--session", session_id]
         if permissions == "full":
@@ -398,7 +402,7 @@ class CustomAgent:
         return (stdout or "").strip(), None
 
 
-def make_agent(name: str, template: str | None):
+def make_agent(name: str, template: str | None, settings=None):
     if name == "claude":
         exe = resolve_exe("claude")
         if not exe:
@@ -412,13 +416,16 @@ def make_agent(name: str, template: str | None):
     if name == "opencode":
         exe = resolve_exe("opencode")
         if not exe:
-            # try known install location
             known = Path.home() / ".dsh" / "opencode-xdbridge" / "runtime" / "1.19.5" / "opencode.exe"
             if known.exists():
                 exe = str(known)
             else:
                 return None
-        return OpenCodeAgent(exe)
+        model = ""
+        if settings is not None:
+            st = state.load()
+            model = st.get("bridge_opencode_model") or settings.get("BRIDGE_OPENCODE_MODEL", "")
+        return OpenCodeAgent(exe, model)
     if name == "custom":
         return CustomAgent(template or "")
     return None
@@ -456,6 +463,7 @@ def run_agent(agent, message, workdir, permissions, timeout, env, session_id):
             encoding="utf-8",
             errors="replace",
             start_new_session=(os.name != "nt"),
+            **hidden_kwargs(),
         )
         try:
             stdout, stderr = proc.communicate(input=stdin_data, timeout=timeout)
@@ -472,6 +480,12 @@ def run_agent(agent, message, workdir, permissions, timeout, env, session_id):
     except Exception as exc:
         return "", str(exc), 1, False, None
     rc = proc.returncode if proc is not None else 1
+    if os.environ.get("BRIDGE_DEBUG_RAW") in ("1", "true", "yes"):
+        try:
+            HOME.mkdir(parents=True, exist_ok=True)
+            (HOME / "last_run_raw.txt").write_text(f"STDOUT:\n{stdout or ''}\n\nSTDERR:\n{stderr or ''}", encoding="utf-8")
+        except OSError:
+            pass
     text, sid = agent.parse(stdout or "", stderr or "", rc)
     return text, (stderr or ""), rc, timed_out, sid
 
@@ -615,6 +629,8 @@ WantedBy=default.target
 
 def cmd_listen(args: argparse.Namespace) -> int:
     settings = Settings()
+    if settings.get("BRIDGE_DEBUG_RAW"):
+        os.environ["BRIDGE_DEBUG_RAW"] = settings.get("BRIDGE_DEBUG_RAW")
     token = settings.get("BRIDGE_TG_TOKEN")
     chat_id = settings.get("BRIDGE_TG_CHAT_ID")
     agent_name = (args.agent or settings.get("BRIDGE_AGENT", "claude")).strip().lower()
@@ -704,7 +720,7 @@ def cmd_listen(args: argparse.Namespace) -> int:
             print("Aborted.")
             return 1
 
-    agent = make_agent(agent_name, agent_cmd)
+    agent = make_agent(agent_name, agent_cmd, settings)
     if agent is None:
         print(f"Agent CLI not found for '{agent_name}'. Is it installed and on PATH?")
         return 1
@@ -752,7 +768,7 @@ def cmd_listen(args: argparse.Namespace) -> int:
         parts = text.split()
         cmd = parts[0].lower().split("@")[0] if parts else ""
         if cmd == "/help":
-            send("Commands: /agents /agent <name> /pwd /folders /cd <name> /mkdir <name> /mode [readonly|edit|full <pin>] /lock /status /new /stop /remote [/remote stop] /sh <cmd> (if enabled) /auth <pin> /help")
+            send("Commands: /agents /agent <name> /pwd /folders /cd <name> /mkdir <name> /mode [readonly|edit|full <pin>] /lock /status /new /stop /remote [/remote stop] /sh <cmd> (if enabled) /auth <pin> /models [/models filter] /model [name] /doctor /debug /help")
         elif cmd == "/agents":
             from . import agents as ag
             ags = ag.detect(settings)
@@ -931,8 +947,16 @@ def cmd_listen(args: argparse.Namespace) -> int:
                 queue.clear()
             send("Stopped. Queue cleared.")
         elif cmd == "/remote":
-            if active_agent["v"] != "claude":
-                send("Remote Control is Claude Code only.")
+            if active_agent["v"] not in ("claude", "opencode"):
+                send("Remote Control is Claude Code only (OpenCode has no mobile remote).")
+                return
+            if active_agent["v"] == "opencode":
+                # OpenCode has no mobile remote control; offer its web UI instead.
+                exe = resolve_exe("opencode")
+                if not exe:
+                    send("opencode not installed.")
+                    return
+                send("OpenCode has no mobile remote control. Start its web UI by hand:\n  opencode web\n  (or: opencode serve --port 4096)\nThen open the printed URL in a browser. The session link belongs to your account; do not forward it.")
                 return
             if len(parts) > 1 and parts[1].lower() == "stop":
                 rp = remote_proc["p"]
@@ -1019,6 +1043,117 @@ def cmd_listen(args: argparse.Namespace) -> int:
             st["bridge_pin_hash"] = __import__("hashlib").sha256(pin.encode()).hexdigest()
             state.save(st)
             send("PIN accepted.")
+        elif cmd == "/debug":
+            send(f"BRIDGE_DEBUG_RAW={'on' if os.environ.get('BRIDGE_DEBUG_RAW') in ('1','true','yes') else 'off'}")
+        elif cmd == "/models":
+            # get model list from opencode models
+            import subprocess as _sp
+            exe = None
+            if isinstance(agent, OpenCodeAgent):
+                exe = agent.exe
+            else:
+                exe = resolve_exe("opencode")
+            if not exe:
+                send("opencode not installed.")
+                return
+            # cache
+            now = time.time()
+            cache = state.load().get("bridge_models_cache", {})
+            if not cache or now - cache.get("ts", 0) > 600:
+                try:
+                    r = _sp.run([exe, "models"], capture_output=True, text=True, timeout=15)
+                    lines = [l.strip() for l in (r.stdout or "").splitlines() if l.strip()]
+                    cache = {"ts": now, "lines": lines}
+                    st = state.load(); st["bridge_models_cache"] = cache; state.save(st)
+                except Exception:
+                    send("Failed to list models.")
+                    return
+            lines = cache.get("lines", [])
+            # filter
+            filt = parts[1].lower() if len(parts) > 1 else ""
+            if filt:
+                lines = [l for l in lines if filt in l.lower()]
+            # group by provider
+            groups: dict[str, list[str]] = {}
+            for l in lines:
+                prov = l.split("/", 1)[0] if "/" in l else "other"
+                groups.setdefault(prov, []).append(l)
+            # BRIDGE_OPENCODE_MODELS filter
+            allowed = settings.get("BRIDGE_OPENCODE_MODELS", "").strip()
+            if allowed:
+                allow_set = set(x.strip() for x in allowed.split(",") if x.strip())
+                groups = {k: [m for m in v if m in allow_set] for k, v in groups.items()}
+                groups = {k: v for k, v in groups.items() if v}
+            # pagination: 10 per page
+            page = 0
+            if len(parts) > 2 and parts[-1].isdigit():
+                page = int(parts[-1])
+            flat = []
+            for prov in sorted(groups):
+                for m in groups[prov]:
+                    flat.append((prov, m))
+            per = 10
+            total = len(flat)
+            start = page * per
+            chunk = flat[start:start+per]
+            out_lines = [f"Models (page {page+1}/{(total+per-1)//per or 1}):"]
+            cur_prov = None
+            for prov, m in chunk:
+                if prov != cur_prov:
+                    out_lines.append(f"[{prov}]")
+                    cur_prov = prov
+                marker = " *" if m == getattr(agent, "_model", "") else ""
+                out_lines.append(f"  {m}{marker}")
+            if total > per:
+                out_lines.append(f"Use /models <filter> <page> e.g. /models opencode 2")
+            send("\n".join(out_lines))
+        elif cmd == "/model":
+            if len(parts) == 1:
+                m = getattr(agent, "_model", "") or settings.get("BRIDGE_OPENCODE_MODEL", "")
+                send(f"Current model: {m or '(default)'}")
+                return
+            # switch
+            name = parts[1].strip()
+            # validate against cached list
+            cache = state.load().get("bridge_models_cache", {})
+            lines = cache.get("lines", [])
+            if lines and name not in lines:
+                # maybe number
+                if name.isdigit():
+                    idx = int(name) - 1
+                    if 0 <= idx < len(lines):
+                        name = lines[idx]
+                    else:
+                        send("Invalid model number.")
+                        return
+                else:
+                    send("Model not in list. Run /models first.")
+                    return
+            if not lines:
+                # no cache; accept if looks like provider/model
+                if "/" not in name:
+                    send("Run /models first to populate the list.")
+                    return
+            # persist
+            st = state.load()
+            st["bridge_opencode_model"] = name
+            state.save(st)
+            if isinstance(agent, OpenCodeAgent):
+                agent._model = name
+            send(f"Model set to {name}.")
+        elif cmd == "/doctor":
+            if not isinstance(agent, OpenCodeAgent):
+                send("Doctor is for opencode.")
+                return
+            import subprocess as _sp
+            model = getattr(agent, "_model", "") or settings.get("BRIDGE_OPENCODE_MODEL", "")
+            exe = agent.exe
+            try:
+                r = _sp.run([exe, "run", "Reply with OK only.", "--format", "json"] + (["-m", model] if model else []), capture_output=True, text=True, timeout=15)
+                ok = r.returncode == 0 and "OK" in (r.stdout or "")
+                send(f"Doctor: {'PASS' if ok else 'FAIL'}" + ("" if ok else f"\n{redactor.redact((r.stderr or r.stdout or '')[-500:])}"))
+            except Exception as exc:
+                send(f"Doctor: FAIL\n{redactor.redact(str(exc))}")
         elif cmd == "/status":
             with lock:
                 qlen = len(queue)

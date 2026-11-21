@@ -40,6 +40,72 @@ def cmd_test(_: argparse.Namespace) -> int:
     return 0 if res.get("sent") else 1
 
 
+def cmd_bridge_id(_: argparse.Namespace) -> int:
+    from .bridge import cmd_bridge_id as _cmd
+
+    return _cmd(_)
+
+
+def cmd_device_pair(a: argparse.Namespace) -> int:
+    from .device import cmd_device_pair as _cmd
+
+    return _cmd(a)
+
+
+def cmd_device_status(a: argparse.Namespace) -> int:
+    from .device import cmd_device_status as _cmd
+
+    return _cmd(a)
+
+
+def cmd_device_unpair(a: argparse.Namespace) -> int:
+    from .device import cmd_device_unpair as _cmd
+
+    return _cmd(a)
+
+
+def cmd_companion_start(a: argparse.Namespace) -> int:
+    from .companion import cmd_companion_start as _cmd
+
+    return _cmd(a)
+
+
+def cmd_companion_status(a: argparse.Namespace) -> int:
+    from .companion import cmd_companion_status as _cmd
+
+    return _cmd(a)
+
+
+def cmd_companion_stop(a: argparse.Namespace) -> int:
+    from .companion import cmd_companion_stop as _cmd
+
+    return _cmd(a)
+
+
+def cmd_autostart_install(a: argparse.Namespace) -> int:
+    from .autostart import install
+
+    return install()
+
+
+def cmd_autostart_uninstall(a: argparse.Namespace) -> int:
+    from .autostart import uninstall
+
+    return uninstall()
+
+
+def cmd_autostart_status(a: argparse.Namespace) -> int:
+    from .autostart import status
+
+    state = status()
+    print(json.dumps(state, indent=2))
+    return 0
+
+def cmd_install_bridge_service(_: argparse.Namespace) -> int:
+    from .bridge import cmd_install_bridge_service as _cmd
+
+    return _cmd(_)
+
 def cmd_telegram_id(_: argparse.Namespace) -> int:
     token = Settings().get("TG_TOKEN")
     if not token:
@@ -69,6 +135,12 @@ def cmd_hook(_: argparse.Namespace) -> int:
     from .hooks import run_from_stdin
 
     return run_from_stdin()
+
+
+def cmd_listen(a: argparse.Namespace) -> int:
+    from .bridge import cmd_listen as _cmd
+
+    return _cmd(a)
 
 
 def cmd_run(a: argparse.Namespace) -> int:
@@ -186,6 +258,48 @@ def main(argv: list[str] | None = None) -> int:
     h = sub.add_parser("install-hooks")
     h.add_argument("--scope", choices=["user", "project"], default="user")
     h.set_defaults(fn=cmd_install_hooks)
+
+    bi = sub.add_parser("bridge-id", help="print the chat id that messaged the bridge bot")
+    bi.set_defaults(fn=cmd_bridge_id)
+
+    ibs = sub.add_parser("install-bridge-service", help="print (do not run) service install steps")
+    ibs.set_defaults(fn=cmd_install_bridge_service)
+
+    dev = sub.add_parser("device", help="manage paired devices")
+    dev_sub = dev.add_subparsers(dest="device_cmd", required=True)
+    dp = dev_sub.add_parser("pair", help="pair this computer with your account")
+    dp.add_argument("--name", default=None)
+    dp.set_defaults(fn=cmd_device_pair)
+    ds = dev_sub.add_parser("status", help="show pairing status")
+    ds.set_defaults(fn=cmd_device_status)
+    du = dev_sub.add_parser("unpair", help="remove pairing")
+    du.set_defaults(fn=cmd_device_unpair)
+
+    comp = sub.add_parser("companion", help="connect this computer to the hosted service")
+    comp_sub = comp.add_subparsers(dest="companion_cmd", required=True)
+    cps = comp_sub.add_parser("start", help="connect and send heartbeats")
+    cps.add_argument("--supervise", action="store_true",
+                     help="restart automatically after a crash (opt-in at login via install-autostart)")
+    cps.set_defaults(fn=cmd_companion_start)
+    cpa = comp_sub.add_parser("install-autostart", help="opt in: start the companion at Windows sign-in")
+    cpa.set_defaults(fn=cmd_autostart_install)
+    cpau = comp_sub.add_parser("uninstall-autostart", help="remove the login launcher")
+    cpau.set_defaults(fn=cmd_autostart_uninstall)
+    cpas = comp_sub.add_parser("autostart-status", help="show auto-start configuration")
+    cpas.set_defaults(fn=cmd_autostart_status)
+    cpst = comp_sub.add_parser("status", help="show companion status")
+    cpst.set_defaults(fn=cmd_companion_status)
+    cpstp = comp_sub.add_parser("stop", help="stop companion (run in its terminal)")
+    cpstp.set_defaults(fn=cmd_companion_stop)
+
+    li = sub.add_parser("listen", help="Telegram wake-up bridge: message -> headless agent -> reply")
+    li.add_argument("--agent", choices=["claude", "codex", "opencode", "custom"], default=None)
+    li.add_argument("--workdir", default=None)
+    li.add_argument("--permissions", choices=["readonly", "edit", "full"], default=None)
+    li.add_argument("--timeout", type=int, default=None)
+    li.add_argument("--dry-run", action="store_true")
+    li.add_argument("--i-understand-the-risk", action="store_true")
+    li.set_defaults(fn=cmd_listen)
     args = p.parse_args(argv)
     return args.fn(args)
 
